@@ -4,13 +4,24 @@
  * Licensed under MPL 2.0 or any later version (see LICENSE.txt)
  */
 
+import * as Log from "./util/logging.js";
+import { isSafari } from "./util/browser.js";
+
 export default class Clipboard {
     constructor(target) {
         this._target = target;
 
+        // Safari only allows interacting with the clipboard during a user interaction
+        // So we keep data in a fake clipboard and then sync it
+        this.isSafari = isSafari();
+        if (this.isSafari) {
+            this.fakeClipboard = [];
+        }
+
         this._eventHandlers = {
             'copy': this._handleCopy.bind(this),
-            'focus': this._handleFocus.bind(this)
+            'focus': this._handleFocus.bind(this),
+            'syncFromFakeClipboard': this._syncFromFakeClipboard.bind(this)
         };
 
         // ===== EVENT HANDLERS =====
@@ -32,14 +43,18 @@ export default class Clipboard {
 
         if (navigator.clipboard.writeText) {
             try {
+                if (this.isSafari) {
+                    this.fakeClipboard.push(e.clipboardData.getData('text/plain'));
+                    return;
+                }
                 await navigator.clipboard.writeText(e.clipboardData.getData('text/plain'));
-            } catch (e) {
-                /* Do nothing */
+            } catch (err) {
+                Log.Warn(`Couldn't write to clipboard. ${err.message}`);
             }
         }
     }
 
-    async _handleFocus() {
+    async _handleFocus(e) {
         try {
             if (navigator.permissions && navigator.permissions.query) {
                 const permission = await navigator.permissions.query({ name: "clipboard-read", allowWithoutGesture: false });
@@ -53,9 +68,20 @@ export default class Clipboard {
             try {
                 const data = await navigator.clipboard.readText();
                 this.onpaste(data);
-            } catch (e) {
-                /* Do nothing */
-                return;
+            } catch (err) {
+                Log.Warn(`Couldn't read from clipboard. ${err.message}`);
+            }
+        }
+    }
+
+    async _syncFromFakeClipboard() {
+        if (navigator.clipboard.writeText) {
+            while (this.fakeClipboard.length) {
+                try {
+                    await navigator.clipboard.writeText(this.fakeClipboard.shift());
+                } catch (err) {
+                    Log.Warn(`Couldn't write to clipboard. ${err.message}`);
+                }
             }
         }
     }
@@ -65,13 +91,27 @@ export default class Clipboard {
     grab() {
         if (!Clipboard.isSupported) return;
         this._target.addEventListener('copy', this._eventHandlers.copy);
-        this._target.addEventListener('focus', this._eventHandlers.focus);
+        if (this.isSafari) {
+            this._target.addEventListener('pointerdown', this._eventHandlers.focus);
+            // For some reason pointerup doen´t trigger on safari
+            this._target.addEventListener('mouseup', this._eventHandlers._syncFromFakeClipboard);
+            this._target.addEventListener('keyup', this._eventHandlers._syncFromFakeClipboard);
+        } else {
+            this._target.addEventListener('focus', this._eventHandlers.focus);
+        }
     }
 
     ungrab() {
         if (!Clipboard.isSupported) return;
         this._target.removeEventListener('copy', this._eventHandlers.copy);
-        this._target.removeEventListener('focus', this._eventHandlers.focus);
+        if (this.isSafari) {
+            this._target.removeEventListener('pointerdown', this._eventHandlers.focus);
+            // For some reason pointerup doen´t trigger on safari
+            this._target.removeEventListener('mouseup', this._eventHandlers._syncFromFakeClipboard);
+            this._target.removeEventListener('keyup', this._eventHandlers._syncFromFakeClipboard);
+        } else {
+            this._target.removeEventListener('focus', this._eventHandlers.focus);
+        }
     }
 }
 
