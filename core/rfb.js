@@ -774,7 +774,11 @@ export default class RFB extends EventTargetMixin {
 
     _updateScale() {
         if (!this._scaleViewport) {
+          if (window.__NOVNC_SCALE_HALF) {
+            this._display.scale = 0.5;
+          } else {
             this._display.scale = 1.0;
+          }
         } else {
             const size = this._screenSize();
             this._display.autoscale(size.w, size.h);
@@ -806,6 +810,9 @@ export default class RFB extends EventTargetMixin {
     // Gets the the size of the available screen
     _screenSize() {
         let r = this._screen.getBoundingClientRect();
+        if (window.__NOVNC_SCALE_HALF) {
+          return { w: r.width * 2, h: r.height * 2 };
+        }
         return { w: r.width, h: r.height };
     }
 
